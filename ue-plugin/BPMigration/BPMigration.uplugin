@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "BP Migration Toolkit",
+	"Description": "Editor commandlets and helpers that drive the BPShift toolchain: Blueprint graph dump + UClass reflection dump for analysis, runtime-trace snapshot/verify for parity checks, plus caller-graph surgery (rewrite K2Node_CallFunction across caller BPs and force-unload + recompile to verify) for live BP -> C++ migrations.",
+	"Category": "Editor",
+	"CreatedBy": "BPShift contributors",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EngineVersion": "5.2.0",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "BPMigration",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

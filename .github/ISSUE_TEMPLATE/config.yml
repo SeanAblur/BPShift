@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: LIMITATIONS.md
+    url: https://github.com/SeanAblur/BPShift/blob/main/LIMITATIONS.md
+    about: "Before filing: check whether your case is already known under 'Not yet verified'."

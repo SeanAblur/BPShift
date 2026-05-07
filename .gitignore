@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# UE plugin build artifacts (when used inside an Unreal project)
+ue-plugin/BPMigration/Binaries/
+ue-plugin/BPMigration/Intermediate/
+ue-plugin/BPMigration/Saved/
+
+# Local config
+*.local
+.env
