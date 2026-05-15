@@ -1,19 +1,25 @@
 # BPShift
 
-**Migrate Unreal Engine Blueprints to C++. Inspect anything in between.**
+**Detect Blueprint behavior shift — across migrations, engine upgrades, forks, and refactors.**
 
-The toolchain produces deterministic intermediate artifacts (graph dumps,
-gap reports, `UPROPERTY` initializers, constructor bodies) without an LLM,
-hands the LLM only the parts that genuinely need judgment (writing
-function bodies, picking between candidate fixes), and then verifies the
-result by snapshotting the original BP at runtime and diffing against the
-generated C++ -- **the parity check itself never touches an LLM**, so
-"the migration looks done" and "the migration matches the BP" are two
-independent signals.
+BPShift captures a Blueprint's runtime behavior via UE reflection, then diffs it against
+another implementation — a C++ port, the same BP on a different engine version, or the same BP
+after a refactor. The diff names the exact property path that changed. No LLM in the comparator.
 
 > **Beta (`v0.1.0`).** Targets UE 5.2 / Windows. See
-> **[LIMITATIONS.md](LIMITATIONS.md)** for required external dependencies,
-> what's verified, and known constraints.
+> **[LIMITATIONS.md](LIMITATIONS.md)** for verified scope and constraints.
+
+## Use it for
+
+| Use case | Command | Why |
+|---|---|---|
+| 🔍 **Inspect** a Blueprint | `bpmigrate inspect MyBP` | Read structure, graphs, and refs without opening UE editor. |
+| 📈 **Engine upgrade drift** | `bpmigrate parity-capture MyBP -o trace.json` → `parity-diff --a=trace_52.json --b=trace_53.json` | Find BPs that changed semantics when you bumped engine. |
+| 🔁 **Refactor regression** | `bpmigrate snapshot MyBP` then `parity-diff` against baseline | Catch unintended behavior changes before they ship. |
+| 🍴 **Fork sync** | snapshot both branches → `parity-diff --a=branch_a.json --b=branch_b.json` | Keep shared behavior aligned across build variants. |
+| ➡️ **Migrate to C++** | `bpmigrate analyze-candidate MyBP` | Port a BP to native C++ with verified parity. |
+
+---
 
 ### How this came to be (be candid)
 

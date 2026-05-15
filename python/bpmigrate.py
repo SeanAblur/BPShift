@@ -454,6 +454,183 @@ def cmd_summarize(args: argparse.Namespace, cfg: Config) -> int:
     return 0
 
 
+# ---------- subcommand: parity-capture ----------
+
+
+def cmd_parity_capture(args: argparse.Namespace, cfg: Config) -> int:
+    """Capture a behavior trace from any BP class — alias for snapshot with parity framing."""
+    switches: dict[str, str] = {}
+    if args.scenario:
+        switches["scenario"] = args.scenario
+    if args.output:
+        switches["output"] = args.output
+    return _run_commandlet(
+        cfg, "SnapshotBPBehavior", positional=[args.game_path], switches=switches
+    )
+
+
+# ---------- parity-diff helper ----------
+
+
+def _compare_trace_snapshots(
+    expected: dict, actual: dict, path_prefix: str = ""
+) -> list[dict[str, str]]:
+    """Pure-Python mirror of C++ FBPBehaviorSnapshot::CompareSnapshots.
+
+    Matches C++ comparator semantics: 1e-3 absolute tolerance for numbers,
+    key-by-key recursive object comparison, missing/extra keys flagged with
+    <missing>/<present> sentinels. No UE editor required.
+    """
+    import math
+
+    diffs: list[dict[str, str]] = []
+
+    if not isinstance(expected, dict) or not isinstance(actual, dict):
+        if expected != actual:
+            diffs.append({"path": path_prefix or "(root)",
+                          "expected": str(expected), "actual": str(actual)})
+        return diffs
+
+    for key, exp_val in expected.items():
+        field_path = f"{path_prefix}.{key}" if path_prefix else key
+        if key not in actual:
+            diffs.append({"path": field_path, "expected": "<present>", "actual": "<missing>"})
+            continue
+        act_val = actual[key]
+        if isinstance(exp_val, dict) and isinstance(act_val, dict):
+            diffs.extend(_compare_trace_snapshots(exp_val, act_val, field_path))
+        elif isinstance(exp_val, list) and isinstance(act_val, list):
+            if len(exp_val) != len(act_val):
+                diffs.append({"path": field_path + ".length",
+                              "expected": str(len(exp_val)), "actual": str(len(act_val))})
+            for i, (e_i, a_i) in enumerate(zip(exp_val, act_val)):
+                elem_path = f"{field_path}[{i}]"
+                if isinstance(e_i, dict) and isinstance(a_i, dict):
+                    diffs.extend(_compare_trace_snapshots(e_i, a_i, elem_path))
+                else:
+                    try:
+                        if not math.isclose(float(e_i), float(a_i), abs_tol=0.001):
+                            diffs.append({"path": elem_path,
+                                          "expected": str(e_i), "actual": str(a_i)})
+                    except (TypeError, ValueError):
+                        if str(e_i) != str(a_i):
+                            diffs.append({"path": elem_path,
+                                          "expected": str(e_i), "actual": str(a_i)})
+        elif isinstance(exp_val, (int, float)) and not isinstance(exp_val, bool):
+            try:
+                if not math.isclose(float(exp_val), float(act_val), abs_tol=0.001):
+                    diffs.append({"path": field_path,
+                                  "expected": str(exp_val), "actual": str(act_val)})
+            except (TypeError, ValueError):
+                if str(exp_val) != str(act_val):
+                    diffs.append({"path": field_path,
+                                  "expected": str(exp_val), "actual": str(act_val)})
+        else:
+            if str(exp_val) != str(act_val):
+                diffs.append({"path": field_path,
+                              "expected": str(exp_val), "actual": str(act_val)})
+
+    for key in actual:
+        if key not in expected:
+            field_path = f"{path_prefix}.{key}" if path_prefix else key
+            diffs.append({"path": field_path, "expected": "<missing>", "actual": "<present>"})
+
+    return diffs
+
+
+# ---------- subcommand: parity-diff ----------
+
+
+def cmd_parity_diff(args: argparse.Namespace, cfg: Config) -> int:  # noqa: ARG001
+    """Diff two behavior traces — pure Python, no UE editor needed.
+
+    Typical workflow:
+      bpmigrate parity-capture /Game/My/BP -o trace_52.json   # on UE 5.2
+      bpmigrate parity-capture /Game/My/BP -o trace_53.json   # on UE 5.3
+      bpmigrate parity-diff --a trace_52.json --b trace_53.json
+    """
+    import json
+
+    path_a = Path(args.a)
+    path_b = Path(args.b)
+    if not path_a.exists():
+        _die(f"Trace A not found: {path_a}")
+    if not path_b.exists():
+        _die(f"Trace B not found: {path_b}")
+
+    trace_a = json.loads(path_a.read_text(encoding="utf-8"))
+    trace_b = json.loads(path_b.read_text(encoding="utf-8"))
+
+    init_diffs = _compare_trace_snapshots(
+        trace_a.get("initialState", {}),
+        trace_b.get("initialState", {}),
+    )
+
+    steps_a = trace_a.get("steps", [])
+    steps_b = trace_b.get("steps", [])
+    step_diffs: list[dict] = []
+    failed_steps = 0
+
+    for i, (sa, sb) in enumerate(zip(steps_a, steps_b)):
+        sd = _compare_trace_snapshots(
+            sa.get("stateAfter", {}), sb.get("stateAfter", {}), f"steps[{i}]"
+        ) + _compare_trace_snapshots(
+            sa.get("outputs") or {}, sb.get("outputs") or {}, f"steps[{i}].outputs"
+        )
+        if sd:
+            failed_steps += 1
+        step_diffs.append({"index": i, "name": sa.get("name", ""), "diffs": sd})
+
+    result = "PASS" if not init_diffs and failed_steps == 0 else "FAIL"
+
+    report = {
+        "schema": "parity_diff_v1",
+        "result": result,
+        "sourceA": trace_a.get("sourceClass", str(path_a)),
+        "sourceB": trace_b.get("sourceClass", str(path_b)),
+        "initialValueMismatches": len(init_diffs),
+        "failedSteps": failed_steps,
+        "totalSteps": min(len(steps_a), len(steps_b)),
+        "stepCountA": len(steps_a),
+        "stepCountB": len(steps_b),
+        "initialStateDiffs": init_diffs,
+        "steps": [s for s in step_diffs if s["diffs"]],
+    }
+
+    if args.output:
+        out = Path(args.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        _info(f"Parity diff report: {out}")
+
+    print(f"\n  result                 : {result}")
+    print(f"  initialValueMismatches : {len(init_diffs)}")
+    print(f"  failedSteps            : {failed_steps} / {min(len(steps_a), len(steps_b))}")
+    if len(steps_a) != len(steps_b):
+        print(f"  stepCountMismatch      : A={len(steps_a)} B={len(steps_b)}")
+    if init_diffs:
+        print("\n  Initial state diffs (first 10):")
+        for d in init_diffs[:10]:
+            print(f"    {d['path']}: {d['expected']!r} -> {d['actual']!r}")
+        if len(init_diffs) > 10:
+            print(f"    ... ({len(init_diffs) - 10} more — see output file)")
+
+    return 0 if result == "PASS" else 1
+
+
+# ---------- subcommand: drift ----------
+
+
+def cmd_drift(args: argparse.Namespace, cfg: Config) -> int:
+    """Shortcut: detect behavioral drift between two traces.
+
+    Equivalent to parity-diff with drift-context output framing.
+    Typical use: compare captures from different engine versions or branches.
+    """
+    diff_args = argparse.Namespace(a=args.a, b=args.b, output=args.output)
+    return cmd_parity_diff(diff_args, cfg)
+
+
 # ---------- subcommand: scenario ----------
 
 
@@ -3346,6 +3523,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("-o", "--output", help="Output regression report path.")
     sp.set_defaults(func=cmd_verify)
+
+    sp = sub.add_parser(
+        "parity-capture",
+        help="Capture a behavior trace for parity analysis (alias for snapshot).",
+    )
+    sp.add_argument("game_path", help="/Game/-style Blueprint asset path.")
+    sp.add_argument("--scenario", help="Scenario JSON path (auto-generates if absent).")
+    sp.add_argument("-o", "--output", help="Output trace path.")
+    sp.set_defaults(func=cmd_parity_capture)
+
+    sp = sub.add_parser(
+        "parity-diff",
+        help="Diff two behavior traces (pure Python — no UE editor needed).",
+    )
+    sp.add_argument("--a", required=True, metavar="TRACE_A", help="First trace JSON.")
+    sp.add_argument("--b", required=True, metavar="TRACE_B", help="Second trace JSON.")
+    sp.add_argument("-o", "--output", help="Output diff report path.")
+    sp.set_defaults(func=cmd_parity_diff)
+
+    sp = sub.add_parser(
+        "drift",
+        help="Detect behavioral drift between two traces (engine upgrade, fork, refactor).",
+    )
+    sp.add_argument("--a", required=True, metavar="TRACE_A",
+                    help="Trace from before (e.g. UE 5.2 capture).")
+    sp.add_argument("--b", required=True, metavar="TRACE_B",
+                    help="Trace from after (e.g. UE 5.3 capture).")
+    sp.add_argument("-o", "--output", help="Output diff report path.")
+    sp.set_defaults(func=cmd_drift)
 
     sp = sub.add_parser("scenario", help="Generate a default scenario JSON.")
     sp.add_argument("json_path", help="UAssetGUI JSON path.")
