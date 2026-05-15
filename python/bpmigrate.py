@@ -601,7 +601,7 @@ def cmd_parity_diff(args: argparse.Namespace, cfg: Config) -> int:  # noqa: ARG0
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-        _info(f"Parity diff report: {out}")
+        sys.stderr.write(f"bpmigrate: parity diff report written: {out}\n")
 
     print(f"\n  result                 : {result}")
     print(f"  initialValueMismatches : {len(init_diffs)}")
